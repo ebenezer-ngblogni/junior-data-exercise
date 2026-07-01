@@ -16,6 +16,7 @@ def read_csv(spark: SparkSession, name: str):
         .option("header", True)
         .option("encoding", "UTF-8")
         .option("multiLine", True)
+        .option("escape", '"')
         .csv(f"resources/{name}.csv")
     )
 
