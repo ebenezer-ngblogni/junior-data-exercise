@@ -1,5 +1,19 @@
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import ArrayType, StringType
+from pyspark.sql import Window
+
+# UDF pour faire un title() d'un string
+@F.udf(returnType=StringType())
+def title_str(s):
+    return s.strip().title() if s else s
+
+# UDF pour faire un title() d'un tableau de string
+@F.udf(returnType=ArrayType(StringType()))
+def title_tab(tab):
+    if tab is None:
+        return None
+    return [s.strip().title() for s in tab]
+
 
 FORMATS_DATE = ["yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "dd-MM-yyyy"]
 
@@ -45,7 +59,7 @@ def normalize_patients(df):
         df.withColumn("ipp", F.trim("ipp"))
         .withColumn("nom_naissance", F.upper(F.trim("nom_naissance")))
         .withColumn("nom_usuel", F.upper(F.trim("nom_usuel")))
-        .withColumn("prenoms", F.transform(F.from_json("prenoms", ArrayType(StringType())), lambda p: F.initcap(F.trim(p))))
+        .withColumn("prenoms", title_tab(F.from_json("prenoms", ArrayType(StringType()))))
         .withColumn("date_naissance", parse_date("date_naissance"))
         .withColumn("deceasedDateTime", parse_date("date_deces"))
         .withColumn("date_fin_validite", parse_date("date_fin_validite"))
@@ -62,8 +76,8 @@ def remove_accent(col):
             'aaousaacdeeillnoorstuuyzAOUSAACDEEILLNOORSTUUYZ',
     )
 
-def find_ipp_active(patients, df_identifiants):
-    """fonction qui ajoute ipp_actif à chaque patient"""
+def find_ipp_active(df, df_identifiants):
+    """fonction qui ajoute ipp_actif à chaque ligne du df"""
     ipp_deactivated = (
         df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
         .filter( (F.col("statut_normalise") == "DEPRECIE") & F.col("ipp_principal").isNotNull() )
@@ -74,7 +88,7 @@ def find_ipp_active(patients, df_identifiants):
     )#.show(truncate=False)
 
     return (
-        patients.join(ipp_deactivated, patients["ipp"] == ipp_deactivated["ipp_deprecie"], "left")
+        df.join(ipp_deactivated, df["ipp"] == ipp_deactivated["ipp_deprecie"], "left")
         .withColumn("ipp_actif", F.coalesce("ipp_principal", "ipp")) #on met dans ipp_actif (ipp_principal si non nul) ou on remet ipp
         .drop("ipp_deprecie", "ipp_principal")
     )
@@ -93,7 +107,15 @@ def merge_patients (patients):
 
 def normalize_adresses(df):
     """Nettoie les adresses"""
-    print("h")
+    return (
+        df.withColumn("ipp", F.trim("ipp"))
+        .withColumn("ligne_adresse", F.trim("ligne_adresse"))
+        .withColumn("code_postal", F.trim("code_postal"))
+        .withColumn("ville", title_str(F.col("ville")))
+        .withColumn("pays", title_str(F.col("pays")))
+        .withColumn("date_debut", parse_date("date_debut"))
+        .withColumn("date_fin", parse_date("date_fin"))
+    )
 
 def main():
     spark = build_spark()
@@ -121,10 +143,53 @@ def main():
 
     patients = find_ipp_active(patients, df_identifiants)
     patients = merge_patients(patients)
-    print(f"\n Patients fusionnés ({patients.count()} lignes)")
+    print(f"\n Patients fusionnés ({patients.count()} ligne)")
     patients.select("ipp_actif", "historique_ipp", "nom_naissance", "prenoms", "gender").show(truncate=False)
     
+    #on normalise les adresses
+    adresses = normalize_adresses(df_adresses)
+
+    #on ajoute les ipp actifs
+    adresses = find_ipp_active(adresses, df_identifiants)
+    adresses.show(truncate=False)
+
+    #on trouve l'adresse courante
+    fenetre = Window.partitionBy("ipp_actif").orderBy(F.desc("date_debut"))
+    adresses = (
+        adresses
+        .withColumn("rang", F.row_number().over(fenetre))
+        .withColumn("use", F.when(F.col("rang") == 1, "home").otherwise("old"))
+    )
+
+    adresses.select("ipp_actif", "ville", "use", "date_debut", "date_fin").orderBy("ipp_actif", "rang").show(truncate=False)
+
+    #formattage FHIR pour chaque adresse
+
+    adresses_fhir = F.struct(
+        F.col("use"),
+        F.array(F.col("ligne_adresse")).alias("line"),
+        F.col("ville").alias("city"),
+        F.col("code_postal").alias("postalCode"),
+        F.col("pays").alias("country"),
+        F.struct(
+            F.col("date_debut").cast("string").alias("start"),
+            F.col("date_fin").cast("string").alias("end"),
+        ).alias("period"),
+    )
     
+    #on regroupe les adresses par patient
+
+    adresses_par_patient = (
+        adresses
+        .withColumn("adresse", adresses_fhir)
+        .groupBy("ipp_actif")
+        .agg(F.collect_list("adresse").alias("adresses"))
+    )
+
+    #on rattache l'adresse aux patients
+    patients = patients.join(adresses_par_patient, "ipp_actif", "left")
+
+    patients.select("ipp_actif", "nom_naissance", "adresses").show(truncate=False)
     
     spark.stop()
 
