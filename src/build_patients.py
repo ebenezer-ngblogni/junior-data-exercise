@@ -133,6 +133,63 @@ def normalize_opposition(df):
         .withColumn("date_recueil", parse_date("date_recueil"))
     )
 
+def build_fhir(patients):
+    """Assemble la ressource FHIR R4 Patient à partir des colonnes réconciliées."""
+
+    # Création de la structure identifiants par IPP. L'actif prend use="usual", les dépréciés prennent use="old"
+    identifiants = F.transform(
+        "historique_ipp",
+        lambda ipp: F.struct(
+            F.lit("https://aphp.fr/ipp").alias("system"), 
+            F.when(ipp == F.col("ipp_actif"), "usual").otherwise("old").alias("use"),
+            ipp.alias("value"),
+        ),
+    )
+
+    # Création du nom de naissance + nom usuel usual s'il existe
+    nom_officiel = F.struct(
+        F.lit("official").alias("use"),
+        F.col("nom_naissance").alias("family"),
+        F.col("prenoms").alias("given"),
+    )
+    nom_usuel = F.when(
+        F.col("nom_usuel").isNotNull(),
+        F.struct(
+            F.lit("usual").alias("use"),
+            F.col("nom_usuel").alias("family"),
+            F.col("prenoms").alias("given"),
+        ),
+    )
+    noms = F.filter(F.array(nom_officiel, nom_usuel), lambda x: x.isNotNull())
+
+    # Ajout opposition recherche comme une extension
+    extension = F.when(
+        F.col("opposition_bool").isNotNull(),
+        F.array(F.struct(
+            F.lit("https://aphp.fr/opposition").alias("url"),
+            F.col("opposition_bool").alias("valueBoolean"),
+        )),
+    )
+
+    # Déterminons si la validité de la ligne
+    active = F.col("date_fin_validite").isNull() | (F.col("date_fin_validite") >= F.current_date())
+
+    # Assemblage de la ressource complète
+    patient = F.struct(
+        F.lit("Patient").alias("resourceType"),
+        F.col("ipp_actif").alias("id"),
+        identifiants.alias("identifier"),
+        active.alias("active"),
+        noms.alias("name"),
+        F.col("gender").alias("gender"),
+        F.col("date_naissance").cast("string").alias("birthDate"),
+        F.col("deceasedDateTime").cast("string").alias("deceasedDateTime"),
+        F.col("adresses").alias("address"),
+        extension.alias("extension"),
+    )
+
+    return patients.withColumn("fhir", patient).select(F.to_json("fhir").alias("patient_fhir"))
+
 def main():
     spark = build_spark()
 
@@ -222,6 +279,11 @@ def main():
 
     patients = patients.join(opposition, "ipp_actif", "left")
     patients.select("ipp_actif", "nom_naissance", "opposition_bool").show(truncate=False)
+
+    #On construis le FHIR des patients
+    resultat = build_fhir(patients)
+    print(f"\n Ressources FHIR ({resultat.count()}) :")
+    resultat.show(truncate=False)
 
     
     spark.stop()
