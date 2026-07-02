@@ -21,7 +21,6 @@ def build_spark() -> SparkSession:
     """On crée la session Spark""" 
     return (
         SparkSession.builder
-        .master("local")
         .appName("API FHIR R4")
         .config("spark.sql.legacy.timeParserPolicy", "CORRECTED")
         .getOrCreate()
