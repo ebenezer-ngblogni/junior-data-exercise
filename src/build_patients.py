@@ -58,8 +58,22 @@ def remove_accent(col):
             'aaousaacdeeillnoorstuuyzAOUSAACDEEILLNOORSTUUYZ',
     )
 
-# def find_ipp():
-    #
+def find_ipp(patients, df_identifiants):
+    #fonction qui ajoute ipp_actif à chaque patient
+    ipp_deactivated = (
+        df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
+        .filter( (F.col("statut_normalise") == "DEPRECIE") & F.col("ipp_principal").isNotNull() )
+        .select(
+            F.trim("ipp").alias("ipp_deprecie"),
+            F.trim("ipp_principal").alias("ipp_principal"),
+        )
+    )#.show(truncate=False)
+
+    return (
+        patients.join(ipp_deactivated, patients["ipp"] == ipp_deactivated["ipp_deprecie"], "left")
+        .withColumn("ipp_actif", F.coalesce("ipp_principal", "ipp")) #on met dans ipp_actif (ipp_principal si non nul) ou on remet ipp
+        .drop("ipp_deprecie", "ipp_principal")
+    )
 
 def main():
     spark = build_spark()
@@ -84,21 +98,11 @@ def main():
     # print(f"\n Patients normalisés ({patients.count()} lignes)")
     # patients.printSchema()
     # patients.show(truncate=False)
-    
-    dg = (
-        df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
-        .filter( (F.col("statut_normalise") == "DEPRECIE") & F.col("ipp_principal").isNotNull() )
-        .select(
-            F.trim("ipp").alias("ipp_deprecie"),
-            F.trim("ipp_principal").alias("ipp_principal"),
-        )
-    )#.show(truncate=False)
 
-    (
-        patients.join(dg, patients["ipp"] == dg["ipp_deprecie"], "left")
-        .withColumn("ipp_actif", F.coalesce("ipp_principal", "ipp")) #on met dans ipp_actif (ipp_principal si non nul) ou on remet ipp
-        .drop("ipp_deprecie", "ipp_principal")
-    ).show(truncate=False)
+    patients = find_ipp(patients, df_identifiants)
+    patients.show(truncate=False)
+    
+    
     
     spark.stop()
 
