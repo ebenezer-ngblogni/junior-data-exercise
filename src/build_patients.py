@@ -50,6 +50,17 @@ def normalize_patients(df):
         .dropDuplicates() #on se débarasse des doublons
     )
 
+def remove_accent(col):
+    # fonction pour retirer les accents
+    return F.translate(
+        col,
+            'ãäöüẞáäčďéěíĺľňóôŕšťúůýžÄÖÜẞÁÄČĎÉĚÍĹĽŇÓÔŔŠŤÚŮÝŽ',
+            'aaousaacdeeillnoorstuuyzAOUSAACDEEILLNOORSTUUYZ',
+    )
+
+# def find_ipp():
+    #
+
 def main():
     spark = build_spark()
 
@@ -66,14 +77,28 @@ def main():
         ("opposition", df_opposition),
     ]:
         print(f"\n {name} ({df.count()} lignes)")
-        df.printSchema()
-        df.show(truncate=False)
+        # df.printSchema()
+        # df.show(truncate=False)
 
     patients = normalize_patients(df_patients)
-    print(f"\n Patients normalisés ({patients.count()} lignes)")
-    patients.printSchema()
-    patients.show(truncate=False)
+    # print(f"\n Patients normalisés ({patients.count()} lignes)")
+    # patients.printSchema()
+    # patients.show(truncate=False)
+    
+    dg = (
+        df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
+        .filter( (F.col("statut_normalise") == "DEPRECIE") & F.col("ipp_principal").isNotNull() )
+        .select(
+            F.trim("ipp").alias("ipp_deprecie"),
+            F.trim("ipp_principal").alias("ipp_principal"),
+        )
+    )#.show(truncate=False)
 
+    (
+        patients.join(dg, patients["ipp"] == dg["ipp_deprecie"], "left")
+        .withColumn("ipp_actif", F.coalesce("ipp_principal", "ipp")) #on met dans ipp_actif (ipp_principal si non nul) ou on remet ipp
+        .drop("ipp_deprecie", "ipp_principal")
+    ).show(truncate=False)
     
     spark.stop()
 
