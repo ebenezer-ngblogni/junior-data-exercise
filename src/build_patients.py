@@ -117,6 +117,22 @@ def normalize_adresses(df):
         .withColumn("date_fin", parse_date("date_fin"))
     )
 
+#Fonctions pour le traitement des oppositions
+
+def normalize_opposition(df):
+    """Convertit l'opposition en booléen."""
+    c = F.lower(remove_accent(F.trim(F.col("opposition"))))
+    return (
+        df.withColumn("ipp", F.trim("ipp"))
+        .withColumn(
+            "opposition_bool",
+            F.when(c.isin("o", "oui", "true", "1", "oppose"), True)
+             .when(c.isin("n", "non", "false", "0"), False)
+             .otherwise(None), 
+        )
+        .withColumn("date_recueil", parse_date("date_recueil"))
+    )
+
 def main():
     spark = build_spark()
 
@@ -190,6 +206,23 @@ def main():
     patients = patients.join(adresses_par_patient, "ipp_actif", "left")
 
     patients.select("ipp_actif", "nom_naissance", "adresses").show(truncate=False)
+
+    #on normalise l'opposition puis on rattache l'ipp actif
+    opposition = normalize_opposition(df_opposition)
+    opposition = find_ipp_active(opposition, df_identifiants)
+
+    # en cas de plusieurs recueils pour un même patient : on garde le PLUS RÉCENT
+    fenetre_opp = Window.partitionBy("ipp_actif").orderBy(F.desc("date_recueil"))
+    opposition = (
+        opposition
+        .withColumn("rang", F.row_number().over(fenetre_opp))
+        .filter(F.col("rang") == 1)
+        .select("ipp_actif", "opposition_bool")
+    )
+
+    patients = patients.join(opposition, "ipp_actif", "left")
+    patients.select("ipp_actif", "nom_naissance", "opposition_bool").show(truncate=False)
+
     
     spark.stop()
 
