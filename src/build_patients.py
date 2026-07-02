@@ -4,7 +4,7 @@ from pyspark.sql.types import ArrayType, StringType
 FORMATS_DATE = ["yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "dd-MM-yyyy"]
 
 def build_spark() -> SparkSession:
-    # On crée la session Spark
+    """On crée la session Spark""" 
     return (
         SparkSession.builder
         .master("local")
@@ -14,7 +14,7 @@ def build_spark() -> SparkSession:
     )
 
 def read_csv(spark: SparkSession, name: str):
-    # Fonction de lecture des csv
+    """Fonction de lecture des csv"""
     return (
         spark.read
         .option("header", True)
@@ -24,11 +24,14 @@ def read_csv(spark: SparkSession, name: str):
         .csv(f"resources/{name}.csv")
     )
 
+#Fonctions pour le traitement des patients
+
 def parse_date(col):
-    # On recherche le bon format de la date
+    """On recherche le bon format de la date"""
     return F.coalesce(*[F.try_to_date(col, format) for format in FORMATS_DATE])
 
 def normalise_gender(col):
+    """Normalise le genre"""
     c = F.lower(F.trim(col))
     return (
         F.when(c.isin("m", "1", "homme", "male", "h"), "male")
@@ -37,6 +40,7 @@ def normalise_gender(col):
     )
 
 def normalize_patients(df):
+    """Normalise la table patient"""
     return(
         df.withColumn("ipp", F.trim("ipp"))
         .withColumn("nom_naissance", F.upper(F.trim("nom_naissance")))
@@ -51,7 +55,7 @@ def normalize_patients(df):
     )
 
 def remove_accent(col):
-    # fonction pour retirer les accents
+    """fonction pour retirer les accents"""
     return F.translate(
         col,
             'ãäöüẞáäčďéěíĺľňóôŕšťúůýžÄÖÜẞÁÄČĎÉĚÍĹĽŇÓÔŔŠŤÚŮÝŽ',
@@ -59,7 +63,7 @@ def remove_accent(col):
     )
 
 def find_ipp_active(patients, df_identifiants):
-    #fonction qui ajoute ipp_actif à chaque patient
+    """fonction qui ajoute ipp_actif à chaque patient"""
     ipp_deactivated = (
         df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
         .filter( (F.col("statut_normalise") == "DEPRECIE") & F.col("ipp_principal").isNotNull() )
@@ -76,7 +80,7 @@ def find_ipp_active(patients, df_identifiants):
     )
 
 def merge_patients (patients):
-    #on regroupe les lignes par patient réel
+    """on regroupe les lignes par patient réel"""
     ipp_par_patient = ( #on regroupe les ipp de chaque patient dans historique_ipp
         patients.groupBy("ipp_actif")
          .agg(F.collect_set("ipp").alias("historique_ipp"))
@@ -84,6 +88,12 @@ def merge_patients (patients):
 
     patients_actifs = patients.filter(F.col("ipp") == F.col("ipp_actif"))
     return patients_actifs.join(ipp_par_patient, "ipp_actif")
+
+#Fonctions pour le traitement des adresses
+
+def normalize_adresses(df):
+    """Nettoie les adresses"""
+    print("h")
 
 def main():
     spark = build_spark()
@@ -114,7 +124,6 @@ def main():
     print(f"\n Patients fusionnés ({patients.count()} lignes)")
     patients.select("ipp_actif", "historique_ipp", "nom_naissance", "prenoms", "gender").show(truncate=False)
     
-
     
     
     spark.stop()
