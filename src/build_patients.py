@@ -62,6 +62,17 @@ def main():
     adresses = find_ipp_active(adresses, df_identifiants)
     adresses.show(truncate=False)
 
+    # adresse d'un patient : on ne garde que le plus récent et l'historique est préservé.
+    cle_doublon = Window.partitionBy(
+        "ipp_actif", "ligne_adresse", "ville", "code_postal"
+    ).orderBy(F.desc("date_debut"))
+    adresses = (
+        adresses
+        .withColumn("rang", F.when(F.col("date_fin").isNull(), F.row_number().over(cle_doublon)))
+        .filter(F.col("rang").isNull() | (F.col("rang") == 1))
+        .drop("rang")
+    )
+
     #on trouve l'adresse courante
     fenetre = Window.partitionBy("ipp_actif").orderBy(F.desc("date_debut"))
     adresses = (

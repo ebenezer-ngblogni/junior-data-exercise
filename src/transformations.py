@@ -3,6 +3,13 @@ from pyspark.sql.types import ArrayType, StringType
 
 FORMATS_DATE = ["yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "dd-MM-yyyy"]
 
+ABREVIATIONS_VOIE = {
+    r"\bBd\b": "Boulevard",
+    r"\bBld\b": "Boulevard",
+    r"\bAv\b": "Avenue",
+    r"\bR\.": "Rue",
+}
+
 # UDF pour faire un title() d'un string
 @F.udf(returnType=StringType())
 def title_str(s):
@@ -37,6 +44,13 @@ def remove_accent(col):
             'ãäöüẞáäčďéěíĺľňóôŕšťúůýžÄÖÜẞÁÄČĎÉĚÍĹĽŇÓÔŔŠŤÚŮÝŽ',
             'aaousaacdeeillnoorstuuyzAOUSAACDEEILLNOORSTUUYZ',
     )
+
+def normalise_voie(col):
+    """Uniformise un libellé de voie"""
+    c = title_str(col)                       
+    for motif, remplacement in ABREVIATIONS_VOIE.items():
+        c = F.regexp_replace(c, motif, remplacement)
+    return c
 
 #Fonctions pour le traitement des patients
 
@@ -94,6 +108,7 @@ def normalize_adresses(df):
         .withColumn("pays", title_str(F.col("pays")))
         .withColumn("date_debut", parse_date("date_debut"))
         .withColumn("date_fin", parse_date("date_fin"))
+        .withColumn("ligne_adresse", normalise_voie(F.col("ligne_adresse")))
     )
 
 #Fonctions pour le traitement des oppositions
