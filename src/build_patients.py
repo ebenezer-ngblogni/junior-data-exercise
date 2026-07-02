@@ -282,8 +282,16 @@ def main():
 
     #On construis le FHIR des patients
     resultat = build_fhir(patients)
-    print(f"\n Ressources FHIR ({resultat.count()}) :")
-    resultat.show(truncate=False)
+
+    #ecriture dans le fichier
+    (
+        resultat
+        .coalesce(1)                      
+        .write
+        .mode("overwrite")                 
+        .text("output/patients_fhir")      
+    )
+    print(f"\n {resultat.count()} ressources FHIR écrites dans output/patients_fhir/")
 
     
     spark.stop()
