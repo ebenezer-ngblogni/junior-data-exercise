@@ -58,7 +58,7 @@ def remove_accent(col):
             'aaousaacdeeillnoorstuuyzAOUSAACDEEILLNOORSTUUYZ',
     )
 
-def find_ipp(patients, df_identifiants):
+def find_ipp_active(patients, df_identifiants):
     #fonction qui ajoute ipp_actif à chaque patient
     ipp_deactivated = (
         df_identifiants.withColumn("statut_normalise", F.upper(remove_accent((F.trim("statut")))))
@@ -74,6 +74,16 @@ def find_ipp(patients, df_identifiants):
         .withColumn("ipp_actif", F.coalesce("ipp_principal", "ipp")) #on met dans ipp_actif (ipp_principal si non nul) ou on remet ipp
         .drop("ipp_deprecie", "ipp_principal")
     )
+
+def merge_patients (patients):
+    #on regroupe les lignes par patient réel
+    ipp_par_patient = ( #on regroupe les ipp de chaque patient dans historique_ipp
+        patients.groupBy("ipp_actif")
+         .agg(F.collect_set("ipp").alias("historique_ipp"))
+    )
+
+    patients_actifs = patients.filter(F.col("ipp") == F.col("ipp_actif"))
+    return patients_actifs.join(ipp_par_patient, "ipp_actif")
 
 def main():
     spark = build_spark()
@@ -95,13 +105,16 @@ def main():
         # df.show(truncate=False)
 
     patients = normalize_patients(df_patients)
-    # print(f"\n Patients normalisés ({patients.count()} lignes)")
+    print(f"\n Patients normalisés ({patients.count()} lignes)")
     # patients.printSchema()
     # patients.show(truncate=False)
 
-    patients = find_ipp(patients, df_identifiants)
-    patients.show(truncate=False)
+    patients = find_ipp_active(patients, df_identifiants)
+    patients = merge_patients(patients)
+    print(f"\n Patients fusionnés ({patients.count()} lignes)")
+    patients.select("ipp_actif", "historique_ipp", "nom_naissance", "prenoms", "gender").show(truncate=False)
     
+
     
     
     spark.stop()
