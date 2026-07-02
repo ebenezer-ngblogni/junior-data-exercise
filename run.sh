@@ -5,4 +5,4 @@ set -euo pipefail
 [ -d .venv ] && source .venv/bin/activate
 
 #lance le pipeline de construction
-spark-submit --master "local[*]" src/build_patients.py
+spark-submit --master "local[*]" --py-files src/transformations.py src/build_patients.py
